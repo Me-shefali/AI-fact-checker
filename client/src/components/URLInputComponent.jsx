@@ -1,12 +1,3 @@
-/*import React from 'react'
-
-function URLInputComponent() {
-  return (
-    <h1>URL Input</h1>
-  )
-}
-
-export default URLInputComponent*/
 import { useState } from "react";
 
 function URLInputComponent({ onResult }) {
