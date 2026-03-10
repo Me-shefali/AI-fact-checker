@@ -1,7 +1,5 @@
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-
-model = SentenceTransformer("all-MiniLM-L6-v2")
+from models.embedding_model import model
 
 def verify_claims(claims):
 
