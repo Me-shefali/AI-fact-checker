@@ -18,13 +18,13 @@ def verify_claims(claims):
             evidence_embedding
         )[0][0]
 
-        verdict = "Unverified"
-
-        if similarity > 0.8:
+        if similarity >= 0.6:
             verdict = "True"
         elif similarity < 0.4:
             verdict = "False"
-
+        else:
+            verdict = "Unverified"
+        
         results.append({
             "claim": claim,
             "similarity": float(similarity),

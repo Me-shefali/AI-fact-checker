@@ -1,15 +1,5 @@
 import re
-import spacy
-
-# Load spaCy model
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    print("Downloading spaCy model...")
-    from spacy.cli import download
-    download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
-
+from services.nlp_model import nlp
 
 def preprocess_text(raw_text):
 
@@ -17,10 +7,10 @@ def preprocess_text(raw_text):
         return []
 
     # Convert to lowercase
-    text = raw_text.lower()
+    # text = raw_text.lower()
 
     # Remove unwanted symbols but keep sentence punctuation
-    text = re.sub(r'[^a-zA-Z0-9\s\.\!\?]', '', text)
+    text = re.sub(r'[^a-zA-Z0-9\s\.\!\?]', '', raw_text)
 
     # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text).strip()
