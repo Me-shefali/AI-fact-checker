@@ -39,17 +39,17 @@ function TextInputComponent({ onResult }) {
   };
 
   return (
-    <div className="bg-white p-4 rounded-lg shadow mb-4">
+    <div className="bg-white p-4 rounded-lg mb-4 flex-col items-center shadow-lg">
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Paste text to fact-check..."
-        className="w-full h-32 p-3 border border-gray-300 rounded"
+        className="w-full h-32 p-3 border border-grey-300 rounded"
       ></textarea>
       <button 
         onClick={handleVerify}
         disabled={loading}
-        className="mt-2 px-4 py-2 bg-blue-500 text-white rounded"
+        className="mt-2 px-4 py-2 bg-[#2d6a4f] text-white rounded hover:bg-[#2d6a4f]/80"
       >
         {loading ? "Verifying..." : "Verify"}
       </button>
