@@ -60,8 +60,27 @@ function ResultComponent({ result, onBack }) {
               {/* Similarity */}
               <p className="text-sm text-gray-600">
                 <strong>Similarity:</strong>{" "}
-                {(item.similarity * 100).toFixed(2)}%
+                {(item.similarity*100).toFixed(2)}%
               </p>
+               {/* Show evidence sources if available */}
+              {item.evidence && item.evidence.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-xs font-medium text-gray-500">Evidence:</p>
+                  {item.evidence.map((ev, i) => (
+                    <div key={i} className="text-xs text-gray-500">
+                      <span className="font-medium text-gray-600">{ev.source}: </span>
+                      {ev.text?.slice(0, 120)}...{" "}
+                      {ev.url && (
+                        <a href={ev.url} target="_blank" rel="noreferrer"
+                          className="text-blue-500 underline">
+                          source
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
             </div>
           ))}
         </div>
