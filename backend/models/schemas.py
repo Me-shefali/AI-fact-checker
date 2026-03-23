@@ -27,6 +27,9 @@ class FactCheckResponse(BaseModel):
     claim: str
     similarity: float
     verdict: str
+    confidence: float | None
+    evidence_url: str | None
+    evidence_source: str | None
     created_at: datetime
 
     class Config:
