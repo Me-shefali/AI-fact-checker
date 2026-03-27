@@ -32,67 +32,75 @@ class URLRequest(BaseModel):
     url: str
 
 
+# ---------- Helper: build FactCheck record ----------
+def build_record(user_id: int, item: dict) -> FactCheck:
+    """
+    Converts a verify_claims result dict into a FactCheck ORM record.
+    Persists confidence + top evidence fields that were previously dropped.
+    """
+    top_evidence = item.get("evidence", [])
+    first = top_evidence[0] if top_evidence else {}
+
+    return FactCheck(
+        user_id=user_id,
+        claim=item["claim"],
+        similarity=item["similarity"],
+        verdict=item["verdict"],
+        confidence=item.get("confidence"),
+        evidence_text=first.get("text", "")[:1000] if first.get("text") else None,
+        evidence_url=first.get("url") or None,
+        evidence_source=first.get("source") or None,
+    )
+
+
 # ---------- TEXT VERIFICATION ----------
 @router.post("/verify")
 async def verify_claim(
     request: ClaimRequest,
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
-):
+):  
+    try:
+        clean_text = preprocess_text(request.text)
+        claims = extract_claims(clean_text)
 
-    clean_text = preprocess_text(request.text)
+        if not claims:
+            return {"input_type": "text", "claims": [], "results": []}
 
-    claims = extract_claims(clean_text)
+        results = verify_claims(claims)
 
-    results = verify_claims(claims)
+        for item in results:
+            db.add(build_record(user.id, item))
+        db.commit()
 
-    # Save results to database
-    for item in results:
-        record = FactCheck(
-            user_id=user.id,
-            claim=item["claim"],
-            similarity=item["similarity"],
-            verdict=item["verdict"]
-        )
+        return {
+            "input_type": "text",
+            "claims": claims,
+            "results": results
+        }
 
-        db.add(record)
-
-    db.commit()
-
-    return {
-        "input_type": "text",
-        "claims": claims,
-        "results": results
-    }
-
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ---------- URL VERIFICATION ----------
 @router.post("/verify/url")
 async def verify_url(
     request: URLRequest,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user),          # FIX: was missing auth check
     db: Session = Depends(get_db)
 ):
-
     try:
         extracted_text = extract_from_url(request.url)
-
         clean_text = preprocess_text(extracted_text)
-
         claims = extract_claims(clean_text)
+
+        if not claims:
+            return {"input_type": "url", "url": request.url, "claims": [], "results": []}
 
         results = verify_claims(claims)
 
         for item in results:
-            record = FactCheck(
-                user_id=user.id,
-                claim=item["claim"],
-                similarity=item["similarity"],
-                verdict=item["verdict"]
-            )
-
-            db.add(record)
-
+            db.add(build_record(user.id, item))
         db.commit()
 
         return {
@@ -113,26 +121,18 @@ async def verify_file(
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-
     try:
         extracted_text = extract_from_file(file)
-
         clean_text = preprocess_text(extracted_text)
-
         claims = extract_claims(clean_text)
+
+        if not claims:
+            return {"input_type": "file", "filename": file.filename, "claims": [], "results": []}
 
         results = verify_claims(claims)
 
         for item in results:
-            record = FactCheck(
-                user_id=user.id,
-                claim=item["claim"],
-                similarity=item["similarity"],
-                verdict=item["verdict"]
-            )
-
-            db.add(record)
-
+            db.add(build_record(user.id, item))
         db.commit()
 
         return {

@@ -14,7 +14,10 @@ function HistorySidebar({ isOpen, onClose }) {
       }
     })
       .then(res => res.json())
-      .then(data => setHistory(data))
+      .then(data => {
+        // Guard: API might return an error object if token expired
+        setHistory(Array.isArray(data) ? data : []);
+      })
       .catch(err => console.log(err));
 
   }, [isOpen]);
@@ -59,15 +62,16 @@ function HistorySidebar({ isOpen, onClose }) {
             >
 
               <p className="text-sm font-medium">
-                {item.claim.slice(0,80)}...
+                {item.claim.slice(0, 80)}...
               </p>
 
               <p className="text-xs text-gray-500">
                 Verdict: {item.verdict}
               </p>
 
+              {/* FIX: similarity can be null for older records — guard before calling toFixed */}
               <p className="text-xs text-gray-400">
-                Similarity: {item.similarity.toFixed(2)}
+                Similarity: {item.similarity != null ? item.similarity.toFixed(2) : "N/A"}
               </p>
 
             </div>
