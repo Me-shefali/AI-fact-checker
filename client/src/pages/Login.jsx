@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-function Login({ setIsLoggedIn }) {
-
+function Login({ setIsLoggedIn, setUsername }) {
   const [isRegister, setIsRegister] = useState(false);
+  const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
     email: "",
@@ -20,11 +21,8 @@ function Login({ setIsLoggedIn }) {
     });
   };
 
-
   const handleSubmit = async (e) => {
-
     e.preventDefault();
-
     setError("");
 
     if (isRegister && formData.password !== formData.confirmPassword) {
@@ -33,7 +31,6 @@ function Login({ setIsLoggedIn }) {
     }
 
     try {
-
       const url = isRegister
         ? "http://localhost:8000/auth/register"
         : "http://localhost:8000/auth/login";
@@ -64,19 +61,23 @@ function Login({ setIsLoggedIn }) {
       }
 
       if (!isRegister) {
-
         localStorage.setItem("token", data.access_token);
-
+        // store username
+        localStorage.setItem("username", formData.username);
+        
         setIsLoggedIn(true);
+        setUsername(formData.username);
 
-      } else {
-
-        alert("Registration successful. Please login.");
-        setIsRegister(false);
-
+        navigate("/");
       }
 
-    } catch (err) {
+      else {
+        alert("Registration successful. Please login.");
+        setIsRegister(false);
+      }
+
+    } 
+    catch (err) {
       setError(err.message);
     }
   };

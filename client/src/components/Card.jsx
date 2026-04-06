@@ -1,10 +1,6 @@
 import React from "react";
-// import PropTypes from "prop-types";
 
-// outer div -> relative overflow-hidden w-60 h-80 rounded-3xl cursor-pointer text-2xl font-bold bg-purple-400
-// 
-
-function Card({ title, description, onClick}){
+function Card({ title, description, icon, onClick}){
     return (
         <div
             onClick = {onClick}
@@ -19,18 +15,22 @@ function Card({ title, description, onClick}){
             >
                 {description}
             </div>
-            <div className="w-full h-full items-center justify-center flex uppercase text-white">
+            <div className="w-full h-full items-center justify-center flex flex-col uppercase text-white">
+                {/* ICON */}
+                <img 
+                src={icon} 
+                alt={title} 
+                className="w-16 h-16 mb-4 object-contain"
+                />
+
+                {/* Title */}
+                <h3 className="text-xl font-bold uppercase mb-2">
                 {title}
+                </h3>
             </div>
         </div>
 
     );
 }
-
-// Card.propTypes = {
-//     title: PropTypes.string.isRequired,
-//     description: PropTypes.string.isRequired,
-//     onClick: PropTypes.func.isRequired,
-// }
 
 export default Card;
