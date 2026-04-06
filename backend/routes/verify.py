@@ -126,6 +126,9 @@ async def verify_file(
         clean_text = preprocess_text(extracted_text)
         claims = extract_claims(clean_text)
 
+        MAX_CLAIMS = 10  # don't verify more than 10 per request
+        claims = claims[:MAX_CLAIMS]
+
         if not claims:
             return {"input_type": "file", "filename": file.filename, "claims": [], "results": []}
 

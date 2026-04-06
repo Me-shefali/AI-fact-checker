@@ -7,26 +7,21 @@ load_dotenv()
 import wikipedia
 import wikipediaapi
 from ddgs import DDGS
-from sentence_transformers import CrossEncoder, SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from services.nlp_model import nlp
+# ── Centralized model imports ─────────────────────────────────────────
+# Models are loaded ONCE as singletons in their own files.
+# Never instantiate CrossEncoder / SentenceTransformer here.
+from services.nlp_model import nlp                       # spaCy en_core_web_sm
+from models.nli_model import nli_model                   # DeBERTa NLI CrossEncoder
+from models.embedding_model import model as embed_model  # MiniLM SentenceTransformer
+from utils.helper import is_readable, build_smart_queries  # helper functions
 
-# ── Models ───────────────────────────────────────────────────────────
-# MiniLM  → retrieval only: ranks which evidence snippets are most
-#            topically relevant to fetch. Never used in verdict logic.
-# NLI     → verdict only:   reads claim + evidence together and decides
-#            entailment / contradiction / neutral contextually.
-#            This is the ONLY model that determines True/False/Unverified.
-nli_model   = CrossEncoder("MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli")
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# Label order for MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli
+# ── Constants ─────────────────────────────────────────────────────────
 LABEL_CONTRADICTION = 0
 LABEL_NEUTRAL       = 1
 LABEL_ENTAILMENT    = 2
 
-# Source weights applied ONLY to NLI output scores — not to retrieval
 SOURCE_WEIGHTS = {
     "Google Fact Check": 1.5,
     "Wikipedia":         1.0,
@@ -35,6 +30,50 @@ SOURCE_WEIGHTS = {
 
 GOOGLE_FC_API_KEY = os.getenv("GOOGLE_FC_API_KEY")
 
+# Google Fact Check stores the FALSE claim text, so negation claims
+# often match the wrong way — reduce its authority for those.
+NEGATION_WORDS = {"not", "never", "no", "isn't", "aren't", "wasn't",
+                  "weren't", "doesn't", "don't", "didn't", "cannot", "can't"}
+
+
+# ── Helper: dynamic source weight ────────────────────────────────────
+def get_source_weight(source: str, claim: str) -> float:
+    base_weight = SOURCE_WEIGHTS.get(source, 0.7)
+    if source == "Google Fact Check":
+        if set(claim.lower().split()) & NEGATION_WORDS:
+            return 0.6   # down from 1.5 for negation claims
+    return base_weight
+
+def extract_best_sentence(evidence_text: str, claim: str) -> str:
+    """
+    Instead of passing the full 1000-char Wikipedia summary to NLI,
+    extract just the most relevant sentence. NLI works far better on
+    short focused pairs than on long paragraphs.
+
+    e.g. For claim "India is a member of the UN":
+    Full summary: "India officially the Republic of India is a country 
+                   in South Asia... it is the seventh largest..."
+    Best sentence: "India is one of the 51 founding members of the UN."
+    """
+    doc = nlp(evidence_text)
+    sentences = [sent.text.strip() for sent in doc.sents if len(sent.text.strip()) > 20]
+    
+    if not sentences:
+        return evidence_text[:300]
+    
+    if len(sentences) == 1:
+        return sentences[0]
+    
+    # Use MiniLM to find the most relevant sentence
+    claim_vec    = embed_model.encode([claim])
+    sent_vecs    = embed_model.encode(sentences)
+    sims         = cosine_similarity(claim_vec, sent_vecs)[0]
+    best_idx     = int(np.argmax(sims))
+    
+    # Return best sentence + neighbour for context
+    start = max(0, best_idx - 1)
+    end   = min(len(sentences), best_idx + 2)
+    return " ".join(sentences[start:end])
 
 # ── 1. Google Fact Check ──────────────────────────────────────────────
 def search_google_factcheck(claim: str) -> list[dict]:
@@ -47,33 +86,97 @@ def search_google_factcheck(claim: str) -> list[dict]:
         for item in data.get("claims", [])[:3]:
             for review in item.get("claimReview", []):
                 results.append({
-                    "text": f"{item.get('text', '')} — Rating: {review.get('textualRating', '')}",
-                    "url": review.get("url", ""),
-                    "source": review.get("publisher", {}).get("name", "Google Fact Check")
+                    "text":   f"{item.get('text', '')} — Rating: {review.get('textualRating', '')}",
+                    "url":    review.get("url", ""),
+                    "source": review.get("publisher", {}).get("name", "Google Fact Check"),
                 })
         return results
     except Exception:
         return []
 
 
-# ── 2. Wikipedia ──────────────────────────────────────────────────────
-def search_wikipedia(claim: str) -> list[dict]:
-    results = []
+# ── 2. Wikipedia REST API — primary search ────────────────────────────
+def search_wikipedia_rest(queries: list[str]) -> list[dict]:
+    """
+    Uses Wikipedia's MediaWiki REST API with focused entity queries.
+
+    Two-step:
+      1. Search for matching article titles given the query
+      2. Fetch the intro paragraph (extract) of each matched article
+
+    Far more reliable than the python wikipedia library because we
+    control exactly what we search for — "Tehran Iran" finds the Tehran
+    article which explicitly states it is Iran's capital, rather than a
+    generic search that might return unrelated pages.
+    """
+    results   = []
     seen_urls = set()
-    wiki_api = wikipediaapi.Wikipedia(user_agent="FactChecker/1.0", language="en")
+    api_url   = "https://en.wikipedia.org/w/api.php"
+
+    for query in queries:
+        try:
+            # Step 1: find matching titles
+            r = httpx.get(api_url, params={
+                "action":   "query",
+                "list":     "search",
+                "srsearch": query,
+                "format":   "json",
+                "srlimit":  3,
+            }, timeout=8)
+            titles = [i["title"] for i in r.json().get("query", {}).get("search", [])]
+
+            # Step 2: fetch intro extract for top 2 titles
+            for title in titles[:2]:
+                page_r = httpx.get(api_url, params={
+                    "action":      "query",
+                    "titles":      title,
+                    "prop":        "extracts|info",
+                    "exintro":     True,
+                    "explaintext": True,
+                    "inprop":      "url",
+                    "format":      "json",
+                }, timeout=8)
+                for page in page_r.json().get("query", {}).get("pages", {}).values():
+                    extract  = page.get("extract", "").strip()
+                    full_url = page.get("fullurl", "")
+                    if extract and full_url and full_url not in seen_urls:
+                        seen_urls.add(full_url)
+                        results.append({
+                            "text":   extract[:1000],
+                            "url":    full_url,
+                            "source": "Wikipedia",
+                        })
+        except Exception:
+            continue
+
+    return results
+
+
+# ── 3. Wikipedia library — fallback search ────────────────────────────
+def search_wikipedia_fallback(claim: str) -> list[dict]:
+    """
+    Fallback using the python wikipedia library.
+    Catches pages the REST API might miss, especially for broad claims
+    where no clean entity pair is available.
+    No hardcoded disambiguation dictionary — the REST API with smart
+    queries already handles that; this fallback searches entity names directly.
+    """
+    results   = []
+    seen_urls = set()
+    wiki_api  = wikipediaapi.Wikipedia(user_agent="FactChecker/1.0", language="en")
 
     def add_page(page):
         if page.exists() and page.fullurl not in seen_urls:
             seen_urls.add(page.fullurl)
             results.append({
-                "text": page.summary[:1000],
-                "url": page.fullurl,
-                "source": "Wikipedia"
+                "text":   page.summary[:1000],
+                "url":    page.fullurl,
+                "source": "Wikipedia",
             })
 
-    # Path A: full claim search
+    # Search the full claim text
     try:
-        for title in wikipedia.search(claim, results=5)[:5]:
+        for title in wikipedia.search(claim, results=3)[:3]:
             try:
                 add_page(wiki_api.page(title))
             except (wikipedia.DisambiguationError, wikipedia.PageError):
@@ -81,15 +184,19 @@ def search_wikipedia(claim: str) -> list[dict]:
     except Exception:
         pass
 
-    # Path B: per-entity/noun-chunk direct lookup
-    # Handles cases where full-claim search returns off-topic pages
+    # Per-entity direct search
     try:
         doc = nlp(claim)
-        entities = [ent.text for ent in doc.ents]
+        entities = [
+            e.text for e in doc.ents
+            if e.label_ not in ["CARDINAL", "ORDINAL", "DATE", "TIME"]
+        ]
         if not entities:
-            entities = [chunk.text for chunk in doc.noun_chunks]
-
-        for kw in entities[:4]:
+            entities = [
+                c.text for c in doc.noun_chunks
+                if not c.text.strip().isdigit()
+            ]
+        for kw in entities[:3]:
             try:
                 add_page(wiki_api.page(kw))
                 for title in wikipedia.search(kw, results=2)[:2]:
@@ -105,35 +212,34 @@ def search_wikipedia(claim: str) -> list[dict]:
     return results
 
 
-# ── 3. DuckDuckGo ─────────────────────────────────────────────────────
+# ── 4. DuckDuckGo ─────────────────────────────────────────────────────
 def search_duckduckgo(claim: str) -> list[dict]:
+    """
+    Web search via DuckDuckGo. Readability filter in the success path —
+    garbled JS-rendered snippets are dropped before NLI sees them.
+    """
     try:
         with DDGS() as ddgs:
-            hits = list(ddgs.text(claim, max_results=5))
+            hits = list(ddgs.text(claim + " fact", max_results=5))
         return [
             {"text": h.get("body", ""), "url": h.get("href", ""), "source": "Web"}
-            for h in hits if h.get("body")
+            for h in hits
+            if h.get("body") and is_readable(h.get("body", ""))
         ]
     except Exception:
         return []
 
 
-# ── 4. MiniLM retrieval ranker ────────────────────────────────────────
+# ── 5. MiniLM retrieval ranker ────────────────────────────────────────
 def retrieve_top_evidence(claim: str, evidence_list: list[dict], top_k: int = 8) -> list[dict]:
     """
-    MiniLM's ONLY job: rank evidence by topical relevance and return top_k.
-
-    It does NOT determine the verdict. It does NOT filter by a similarity
-    threshold that could cut good evidence. It simply sorts and returns
-    the most topically relevant snippets for the NLI model to read.
-
-    Source weight is applied here only to prevent short authoritative
-    Google FC snippets from being ranked below longer Wikipedia pages
-    on pure cosine similarity alone.
+    MiniLM ranks evidence snippets by topical relevance and returns top_k.
+    Role: retrieval only — does NOT determine the verdict.
+    Source weight applied here only so short Google FC snippets are not
+    ranked below longer Wikipedia pages on cosine similarity alone.
     """
     if not evidence_list:
         return []
-
     texts = [e["text"] for e in evidence_list if e.get("text")]
     if not texts:
         return []
@@ -142,43 +248,34 @@ def retrieve_top_evidence(claim: str, evidence_list: list[dict], top_k: int = 8)
     evidence_vecs = embed_model.encode(texts)
     sims          = cosine_similarity(claim_vec, evidence_vecs)[0]
 
-    # Rank by similarity × source weight — retrieval order only
     ranked = sorted(
         zip(sims.tolist(), evidence_list),
         key=lambda x: x[0] * SOURCE_WEIGHTS.get(x[1].get("source", "Web"), 0.7),
-        reverse=True
+        reverse=True,
     )
 
-    # Return top_k regardless of score — no threshold cutoff.
-    # If there is no relevant evidence at all, that is NLI's problem
-    # to decide, not MiniLM's job to hide from NLI.
+    # Drop completely unrelated evidence
+    ranked = [(s, e) for s, e in ranked if s > 0.15]
+
     return [e for _, e in ranked[:top_k]]
 
 
-# ── 5. Softmax ────────────────────────────────────────────────────────
+# ── 6. Softmax ────────────────────────────────────────────────────────
 def softmax(x: np.ndarray) -> np.ndarray:
     e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
     return e_x / e_x.sum(axis=1, keepdims=True)
 
 
-# ── 6. NLI contextual scoring ────────────────────────────────────────
+# ── 7. NLI contextual scoring ─────────────────────────────────────────
 def score_with_nli(claim: str, evidence_list: list[dict]) -> list[dict]:
     """
-    NLI's ONLY job: read each (claim, evidence) pair together and output
-    entailment / contradiction / neutral probabilities.
-
-    This is purely contextual — the model reads the full text of both
-    the claim and the evidence and decides the logical relationship.
-    Similarity plays NO role here whatsoever.
-
-    Source weight is applied to the NLI output scores only to reflect
-    that a Google FC verdict is more authoritative than a Wikipedia
-    general summary or a DDG web snippet.
+    NLI reads each (claim, evidence) pair and outputs probabilities for
+    entailment / contradiction / neutral. Purely contextual — similarity
+    plays no role here. Source weight amplifies authoritative sources.
     """
     if not evidence_list:
         return []
-
-    pairs = [(claim, e["text"]) for e in evidence_list if e.get("text")]
+    pairs = [(claim, extract_best_sentence(e["text"], claim)) for e in evidence_list if e.get("text")]
     if not pairs:
         return []
 
@@ -186,47 +283,35 @@ def score_with_nli(claim: str, evidence_list: list[dict]) -> list[dict]:
     if raw_logits.ndim == 1:
         raw_logits = raw_logits.reshape(1, -1)
 
-    # Softmax converts logits to proper probabilities summing to 1.0
     probs = softmax(raw_logits)
 
     scored = []
     for i, e in enumerate(evidence_list):
         if not e.get("text"):
             continue
-        weight = SOURCE_WEIGHTS.get(e.get("source", "Web"), 0.7)
-        # Raw probabilities stored separately for unbiased gating
+        weight = get_source_weight(e.get("source", "Web"), claim)
         scored.append({
             **e,
-            "entail_prob":  float(probs[i, LABEL_ENTAILMENT]),
-            "contra_prob":  float(probs[i, LABEL_CONTRADICTION]),
-            "neutral_prob": float(probs[i, LABEL_NEUTRAL]),
-            # Weighted scores for aggregation — source authority amplifies
-            "entail_weighted": float(probs[i, LABEL_ENTAILMENT])   * weight,
+            "entail_prob":     float(probs[i, LABEL_ENTAILMENT]),
+            "contra_prob":     float(probs[i, LABEL_CONTRADICTION]),
+            "neutral_prob":    float(probs[i, LABEL_NEUTRAL]),
+            "entail_weighted": float(probs[i, LABEL_ENTAILMENT])    * weight,
             "contra_weighted": float(probs[i, LABEL_CONTRADICTION]) * weight,
         })
     return scored
 
 
-# ── 7. Verdict — purely NLI contextual output ─────────────────────────
+# ── 8. Verdict ────────────────────────────────────────────────────────
 def decide_verdict(nli_scored: list[dict]) -> tuple[str, float, list]:
     """
     Decides verdict based purely on NLI contextual scores.
-    No similarity involved. No MiniLM scores here.
 
-    Strategy:
-    - Take the single best entailment score and single best contradiction
-      score across all evidence snippets (max).
-    - Also compute mean to require some consensus, not just one lucky hit.
-    - Combined = 60% max + 40% mean.
-    - Whichever is higher (entail vs contra) wins, subject to a minimum
-      threshold to avoid noise producing confident wrong verdicts.
+    Gate: if not a single evidence piece has entail OR contra > 0.20,
+    evidence is entirely neutral/irrelevant → Unverified immediately.
 
-    The threshold 0.25 on combined weighted scores is intentionally low
-    because source weighting already amplifies reliable sources. A Google FC
-    snippet at 0.5 raw × 1.5 weight = 0.75 weighted — easily clears 0.25.
-    A Wikipedia summary at 0.35 raw × 1.0 weight = 0.35 — also clears it.
-    Only truly neutral/irrelevant evidence (e.g. 0.15 raw × 0.7 = 0.105)
-    stays below threshold and correctly produces Unverified.
+    Otherwise: combined = 60% max + 40% mean across all snippets.
+    Whichever of entail / contra is higher wins, subject to needing
+    either a decent absolute score (>0.30) OR a clear gap (>0.10).
     """
     if not nli_scored:
         return "Unverified", 0.0, []
@@ -237,19 +322,25 @@ def decide_verdict(nli_scored: list[dict]) -> tuple[str, float, list]:
     combined_entail = 0.6 * max(entail_w) + 0.4 * float(np.mean(entail_w))
     combined_contra = 0.6 * max(contra_w) + 0.4 * float(np.mean(contra_w))
 
-    # Verdict: whichever NLI signal is stronger wins
+    best_entail_raw = max(e["entail_prob"] for e in nli_scored)
+    best_contra_raw = max(e["contra_prob"] for e in nli_scored)
+
+    if best_entail_raw < 0.20 and best_contra_raw < 0.20:
+        return "Unverified", 0.0, []
+
+    gap = abs(combined_entail - combined_contra)
+
     if combined_entail >= combined_contra:
-        if combined_entail > 0.25:
+        if combined_entail > 0.30 or gap > 0.10:
             verdict, confidence = "True", combined_entail
         else:
             verdict, confidence = "Unverified", combined_entail
     else:
-        if combined_contra > 0.25:
+        if combined_contra > 0.30 or gap > 0.10:
             verdict, confidence = "False", combined_contra
         else:
             verdict, confidence = "Unverified", combined_contra
 
-    # Return top 2 evidence by entailment (for display)
     top_two = sorted(nli_scored, key=lambda e: e["entail_weighted"], reverse=True)[:2]
     clean_evidence = [
         {"text": e["text"], "url": e["url"], "source": e["source"]}
@@ -261,24 +352,50 @@ def decide_verdict(nli_scored: list[dict]) -> tuple[str, float, list]:
 
 # ── Main entry point ──────────────────────────────────────────────────
 def verify_claims(claims: list[str]) -> list[dict]:
+    """
+    Verifies a list of claims and returns results.
+
+    Filtering and capping are handled UPSTREAM — no duplication here:
+      - services/claim_extractor.py  → is_worth_verifying() filters vague sentences
+      - routes/verify.py             → MAX_CLAIMS = 10 cap per request
+
+    This function trusts that the list it receives is already clean.
+    """
     results = []
 
     for claim in claims:
-        # Step 1: Gather evidence from all sources
-        google_evidence = search_google_factcheck(claim)
-        wiki_evidence   = search_wikipedia(claim)
-        ddg_evidence    = search_duckduckgo(claim)
-        all_evidence    = google_evidence + wiki_evidence + ddg_evidence
+        # Step 1: Build focused search queries from the claim's own context
+        smart_queries = build_smart_queries(claim)
 
-        # Step 2: MiniLM ranks by topical relevance — retrieval only
+        # Step 2: Gather evidence — Google FC + Wikipedia REST + fallback + DDG
+        # Only keep GFC results that are actually about this claim
+        # (GFC returns results for similar-sounding claims, not exact matches)
+        raw_google = search_google_factcheck(claim)
+        if raw_google:
+            claim_vec = embed_model.encode([claim])
+            gfc_vecs  = embed_model.encode([e["text"] for e in raw_google])
+            gfc_sims  = cosine_similarity(claim_vec, gfc_vecs)[0]
+            google_evidence = [
+                e for e, s in zip(raw_google, gfc_sims) if s > 0.40
+            ]
+        else:
+            google_evidence = []
+        
+        rest_evidence   = search_wikipedia_rest(smart_queries)   # primary
+        wiki_evidence   = search_wikipedia_fallback(claim)       # safety net
+        ddg_evidence    = search_duckduckgo(claim)
+
+        all_evidence = google_evidence + rest_evidence + wiki_evidence + ddg_evidence
+
+        # Step 3: MiniLM ranks by topical relevance — retrieval only
         top_evidence = retrieve_top_evidence(claim, all_evidence, top_k=8)
         if not top_evidence:
             top_evidence = all_evidence[:8]
 
-        # Step 3: NLI reads claim + evidence contextually — verdict only
+        # Step 4: NLI reads claim + evidence contextually — verdict only
         nli_scored = score_with_nli(claim, top_evidence)
 
-        # Step 4: Decide verdict from NLI scores alone
+        # Step 5: Decide verdict from NLI scores alone
         verdict, confidence, used_evidence = decide_verdict(nli_scored)
 
         results.append({
@@ -286,7 +403,7 @@ def verify_claims(claims: list[str]) -> list[dict]:
             "verdict":    verdict,
             "confidence": round(confidence, 3),
             "similarity": round(confidence, 3),
-            "evidence":   used_evidence
+            "evidence":   used_evidence,
         })
 
     return results
