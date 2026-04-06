@@ -1,12 +1,3 @@
-/*import React from 'react'
-
-function URLInputComponent() {
-  return (
-    <h1>URL Input</h1>
-  )
-}
-
-export default URLInputComponent*/
 import { useState } from "react";
 
 function URLInputComponent({ onResult }) {
@@ -14,7 +5,6 @@ function URLInputComponent({ onResult }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  /* Validate URL format */
   const isValidUrl = (urlString) => {
     try {
       new URL(urlString);
@@ -24,7 +14,6 @@ function URLInputComponent({ onResult }) {
     }
   };
 
-  /* Handle URL verification by sending to backend */
   const handleVerify = async () => {
     setError("");
 
@@ -38,25 +27,41 @@ function URLInputComponent({ onResult }) {
       return;
     }
 
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setError("You must be logged in to verify a URL.");
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await fetch("http://localhost:8000/api/verify/url", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + token        // FIX: was missing entirely
+        },
         body: JSON.stringify({ url })
       });
+
+      if (!response.ok) {
+        const err = await response.json();
+        setError(err.detail || "Verification failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
       const data = await response.json();
       onResult(data);
-    } catch (error) {
+    } catch (err) {
       setError("Failed to verify URL. Please try again.");
-      console.error("Error:", error);
+      console.error("Error:", err);
     }
     setLoading(false);
   };
 
   return (
     <div className="bg-white p-4 rounded-lg shadow mb-4">
-      {/* URL input field */}
       <input
         type="url"
         value={url}
@@ -65,10 +70,8 @@ function URLInputComponent({ onResult }) {
         className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
 
-      {/* Error message display */}
       {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
 
-      {/* Verify button */}
       <button
         onClick={handleVerify}
         disabled={loading || !url.trim()}

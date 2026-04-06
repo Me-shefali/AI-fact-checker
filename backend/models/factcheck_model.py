@@ -16,5 +16,13 @@ class FactCheck(Base):
     similarity = Column(Float)
 
     verdict = Column(String(20))
+    
+    confidence = Column(Float, nullable=True)
 
+    evidence_text = Column(Text, nullable=True)
+
+    evidence_url = Column(Text, nullable=True)
+
+    evidence_source = Column(String(100), nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
