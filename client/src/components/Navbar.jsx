@@ -2,25 +2,39 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import HistorySidebar from "../components/HistorySidebar";
 
-// FIX: Navbar owns the sidebar state itself.
-// The old code accepted openSidebar as a prop that was never passed from App,
-// and rendered isSidebarOpen state that was never used to open the sidebar.
 function Navbar({ isLoggedIn, setIsLoggedIn }) {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
     <>
-      <nav className="bg-[#fffbf5] shadow px-10 py-4 flex justify-between border-1 border-[#67B99A] transition-all duration-500 rounded-2xl">
+      <nav 
+        className="sticky top-4 z-50 mx-6
+          backdrop-blur-lg bg-white/70
+          shadow-lg
+          px-8 py-3
+          flex justify-between items-center
+          rounded-2xl
+          border border-white/40"
+      >
+
+        {/* Left Side */}
         <div className="flex items-center space-x-3">
-          <img src="/validation.png" className="h-9 w-9 object-contain" />
-          <h1 className="font-bold text-2xl text-[#036666]">AI Fact Checker</h1>
+          <img 
+            src="/validation.png" 
+            className="h-8 w-8 object-contain" 
+            alt="logo"
+          />
+          <h1 className="font-bold text-2xl text-[#036666]">
+            AI Fact Checker
+          </h1>
         </div>
 
+        {/* Right Side */}
         <div className="flex items-center space-x-6 text-gray-700 font-medium">
           <Link
             to="/"
-            className="transition duration-200 border-2 border-transparent rounded-full px-4 py-2 hover:border-[#036666]"
+            className="relative px-3 py-1 transition duration-300 hover:text-[#036666]"
           >
             Home
           </Link>
@@ -29,16 +43,16 @@ function Navbar({ isLoggedIn, setIsLoggedIn }) {
             <>
               <button
                 onClick={() => setIsSidebarOpen(true)}
-                className="transition duration-200 border-2 border-transparent rounded-full px-4 py-2 hover:border-[#036666]"
+                className="hover:text-[#036666] transition"
               >
                 History
               </button>
               <button
                 onClick={() => {
-                  localStorage.removeItem("token");   // FIX: also clears token on logout
+                  localStorage.removeItem("token");
                   setIsLoggedIn(false);
                 }}
-                className="text-red-600 hover:text-red-800 transition duration-200 border-2 border-transparent rounded-full px-4 py-2 hover:border-red-700"
+                className="text-red-500 hover:text-red-700 transition"
               >
                 Logout
               </button>
@@ -46,7 +60,7 @@ function Navbar({ isLoggedIn, setIsLoggedIn }) {
           ) : (
             <Link
               to="/login"
-              className="transition duration-200 border-2 border-transparent rounded-full px-4 py-2 hover:border-[#036666]"
+              className="hover:text-[#036666] transition"
             >
               Login
             </Link>

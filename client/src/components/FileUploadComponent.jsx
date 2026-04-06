@@ -1,12 +1,3 @@
-/*import React from 'react'
-
-function FileUploadComponent() {
-  return (
-    <h1>File Upload</h1>
-  )
-}
-
-export default FileUploadComponent*/
 import { useState } from "react";
 
 function FileUploadComponent({ onResult }) {
@@ -63,26 +54,46 @@ function FileUploadComponent({ onResult }) {
     setError("");
 
     try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setError("User not authenticated. Please login.");
+        setLoading(false);
+        return;
+      }
+
       const formData = new FormData();
       formData.append("file", file);
 
       const response = await fetch("http://localhost:8000/api/verify/file", {
         method: "POST",
+        headers: {
+          "Authorization": "Bearer " + token
+        },
         body: formData
       });
+
+      if (!response.ok) {
+        const err = await response.json();
+        setError(err.detail || "File verification failed");
+        setLoading(false);
+        return;
+      }
 
       const data = await response.json();
       onResult(data);
       setFile(null); // Clear file after successful upload
-    } catch (error) {
+    } 
+    catch (error) {
       setError("Failed to upload and verify file. Please try again.");
       console.error("Error:", error);
     }
+
     setLoading(false);
   };
 
   return (
-    <div className="bg-white p-4 rounded-lg shadow mb-4">
+    <div className="bg-white p-4 rounded-lg shadow-md mb-4">
       {/* File input */}
       <input
         type="file"
@@ -106,7 +117,7 @@ function FileUploadComponent({ onResult }) {
       <button
         onClick={handleUpload}
         disabled={loading || !file}
-        className="mt-3 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
+        className="mt-3 px-4 py-2 bg-[#2d6a4f] text-white rounded hover:bg-[#2d6a4f]/80 disabled:bg-gray-400"
       >
         {loading ? "Uploading..." : "Upload & Verify"}
       </button>
