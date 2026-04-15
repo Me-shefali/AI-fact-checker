@@ -219,11 +219,18 @@ def assess_support_direction(claim: str, text: str) -> Dict[str, Any]:
         has_negation = detect_negation(claim)
         claim_for_nli = remove_negation(claim) if has_negation else claim
 
+        print(f"[NLI] Claim: {claim}")
+        print(f"[NLI] Has negation: {has_negation}")
+        if has_negation:
+            print(f"[NLI] Non-negated version: {claim_for_nli}")
+
         # Use NLI model on the non-negated claim
         scores = nli_model.predict([(claim_for_nli, text)])[0]  # [contradiction, entailment, neutral]
         contradiction_score = scores[0]
         entailment_score = scores[1]
         neutral_score = scores[2]
+
+        print(f"[NLI] Scores - Entailment: {entailment_score:.3f}, Contradiction: {contradiction_score:.3f}, Neutral: {neutral_score:.3f}")
 
         # Determine direction based on highest score
         if entailment_score > contradiction_score and entailment_score > neutral_score:
@@ -236,14 +243,20 @@ def assess_support_direction(claim: str, text: str) -> Dict[str, Any]:
             direction = "neutral"
             confidence_delta = 0.0
 
+        print(f"[NLI] Initial direction (before negation flip): {direction}")
+
         # 🔴 FLIP DIRECTION IF ORIGINAL CLAIM WAS NEGATED
         if has_negation:
             if direction == "support":
                 direction = "contradict"
-                confidence_delta = float(entailment_score) * 0.1  # Scale based on how well evidence supports the negated claim
+                confidence_delta = float(entailment_score) * 0.1
+                print(f"[NLI] Negation flip: support → contradict")
             elif direction == "contradict":
                 direction = "support"
                 confidence_delta = float(contradiction_score) * 0.1
+                print(f"[NLI] Negation flip: contradict → support")
+
+        print(f"[NLI] Final direction (after negation flip): {direction}")
 
         support_count = float(entailment_score)
         contradict_count = float(contradiction_score)

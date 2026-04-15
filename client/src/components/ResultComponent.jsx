@@ -6,6 +6,7 @@ function ResultComponent({ result, onBack }) {
   // 🔹 Improved overall status logic
   const hasTrue = results.some(r => r.verdict?.toLowerCase().includes("true"));
   const hasFalse = results.some(r => r.verdict?.toLowerCase().includes("false"));
+  const hasUnverified = results.some(r => r.verdict?.toLowerCase().includes("unverified"));
 
   let overallStatus = "Unverified";
   let statusColor = "text-yellow-600";
@@ -13,12 +14,15 @@ function ResultComponent({ result, onBack }) {
   if (hasTrue && hasFalse) {
     overallStatus = "Mixed";
     statusColor = "text-yellow-600";
-  } else if (hasFalse) {
-    overallStatus = "Not Verified";
+  } else if (hasFalse && !hasTrue) {
+    overallStatus = "Likely False";
     statusColor = "text-red-600";
-  } else if (hasTrue) {
-    overallStatus = "Verified";
+  } else if (hasTrue && !hasFalse) {
+    overallStatus = "Likely True";
     statusColor = "text-green-600";
+  } else if (hasUnverified) {
+    overallStatus = "Unverified";
+    statusColor = "text-yellow-600";
   }
 
   return (

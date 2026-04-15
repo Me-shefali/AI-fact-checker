@@ -170,12 +170,24 @@ def aggregate_verdict(scored_evidence: List[Dict]) -> Dict:
     final_score = min(max(final_score, 0.0), 1.0)
     print(f"[VERDICT] final_score={final_score:.3f}")
 
-    if final_score >= VERDICT_LIKELY_TRUE_THRESHOLD and support_sum >= contradict_sum:
-        verdict = "Likely True"
-    elif final_score <= VERDICT_LIKELY_FALSE_THRESHOLD and contradict_sum > support_sum:
+    # 🔴 FIX #3: Better verdict logic that handles all cases
+    # Priority 1: Check strong contradiction (and no support)
+    if contradict_sum > support_sum and contradict_sum > 0.2:
+        # Strong contradiction found
         verdict = "Likely False"
+    # Priority 2: Check strong support  
+    elif support_sum > contradict_sum and support_sum > 0.2:
+        # Clear support found
+        verdict = "Likely True"
+    # Priority 3: Check final score for high confidence
+    elif final_score >= VERDICT_LIKELY_TRUE_THRESHOLD:
+        # High score with no strong contradiction
+        verdict = "Likely True"
+    # Priority 4: Check for unverified threshold
     elif final_score >= VERDICT_UNVERIFIED_MIN:
+        # Medium confidence, mixed evidence
         verdict = "Unverified"
+    # Default: Low confidence
     else:
         verdict = "Likely False"
 
