@@ -3,8 +3,23 @@ function ResultComponent({ result, onBack }) {
 
   const results = result.results || [];
 
-  // Determine overall status
-  const isVerified = results.some(r => r.verdict === "True");
+  // 🔹 Improved overall status logic
+  const hasTrue = results.some(r => r.verdict?.toLowerCase().includes("true"));
+  const hasFalse = results.some(r => r.verdict?.toLowerCase().includes("false"));
+
+  let overallStatus = "Unverified";
+  let statusColor = "text-yellow-600";
+
+  if (hasTrue && hasFalse) {
+    overallStatus = "Mixed";
+    statusColor = "text-yellow-600";
+  } else if (hasFalse) {
+    overallStatus = "Not Verified";
+    statusColor = "text-red-600";
+  } else if (hasTrue) {
+    overallStatus = "Verified";
+    statusColor = "text-green-600";
+  }
 
   return (
     <div className="bg-white p-6 rounded-lg shadow mb-4">
@@ -18,12 +33,8 @@ function ResultComponent({ result, onBack }) {
       <div className="mb-6">
         <p className="text-sm text-gray-600">
           <strong>Status:</strong>
-          <span
-            className={`ml-2 font-medium ${
-              isVerified ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            {isVerified ? "Verified" : "Not Verified"}
+          <span className={`ml-2 font-medium ${statusColor}`}>
+            {overallStatus}
           </span>
         </p>
       </div>
@@ -46,9 +57,9 @@ function ResultComponent({ result, onBack }) {
                 <strong>Verdict:</strong>{" "}
                 <span
                   className={
-                    item.verdict === "True"
+                    item.verdict?.toLowerCase().includes("true")
                       ? "text-green-600 font-medium"
-                      : item.verdict === "False"
+                      : item.verdict?.toLowerCase().includes("false")
                       ? "text-red-600 font-medium"
                       : "text-yellow-600 font-medium"
                   }
@@ -57,22 +68,35 @@ function ResultComponent({ result, onBack }) {
                 </span>
               </p>
 
-              {/* Similarity */}
+              {/* Confidence (replaces similarity) */}
               <p className="text-sm text-gray-600">
-                <strong>Similarity:</strong>{" "}
-                {(item.similarity*100).toFixed(2)}%
+                <strong>Confidence:</strong>{" "}
+                {item.confidence !== undefined
+                  ? `${(item.confidence * 100).toFixed(2)}%`
+                  : "N/A"}
               </p>
-               {/* Show evidence sources if available */}
+
+              {/* Evidence */}
               {item.evidence && item.evidence.length > 0 && (
                 <div className="mt-2 space-y-1">
-                  <p className="text-xs font-medium text-gray-500">Evidence:</p>
+                  <p className="text-xs font-medium text-gray-500">
+                    Evidence:
+                  </p>
+
                   {item.evidence.map((ev, i) => (
                     <div key={i} className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-600">{ev.source}: </span>
-                      {ev.text?.slice(0, 120)}...{" "}
+                      <span className="font-medium text-gray-600">
+                        {ev.source || ev.domain || 'Source'}:
+                      </span>{" "}
+                      {ev.text?.slice(0, 120)}...
+
                       {ev.url && (
-                        <a href={ev.url} target="_blank" rel="noreferrer"
-                          className="text-blue-500 underline">
+                        <a
+                          href={ev.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-500 underline ml-1"
+                        >
                           source
                         </a>
                       )}
@@ -85,7 +109,9 @@ function ResultComponent({ result, onBack }) {
           ))}
         </div>
       ) : (
-        <p className="text-gray-500 text-sm">No claims detected.</p>
+        <p className="text-gray-500 text-sm">
+          No claims detected.
+        </p>
       )}
 
       {/* Back Button */}

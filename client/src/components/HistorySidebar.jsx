@@ -71,7 +71,7 @@ function HistorySidebar({ isOpen, onClose }) {
 
               {/* FIX: similarity can be null for older records — guard before calling toFixed */}
               <p className="text-xs text-gray-400">
-                Similarity: {item.similarity != null ? item.similarity.toFixed(2) : "N/A"}
+                confidence: {item.confidence != null ? item.confidence.toFixed(2) : item.similarity.toFixed(2)}
               </p>
 
             </div>
