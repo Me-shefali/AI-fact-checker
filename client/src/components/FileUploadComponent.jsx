@@ -50,6 +50,8 @@ function FileUploadComponent({ onResult }) {
       return;
     }
 
+    setIsLoading(true);
+    onResult(null);
     setLoading(true);
     setError("");
 
@@ -89,6 +91,7 @@ function FileUploadComponent({ onResult }) {
       console.error("Error:", error);
     }
 
+    setIsLoading(false);
     setLoading(false);
   };
 

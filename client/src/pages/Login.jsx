@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 
 function Login({ setIsLoggedIn, setUsername }) {
   const [isRegister, setIsRegister] = useState(false);
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -24,16 +26,20 @@ function Login({ setIsLoggedIn, setUsername }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
     if (isRegister && formData.password !== formData.confirmPassword) {
       setError("Passwords do not match");
+      setLoading(false);
       return;
     }
 
     try {
+      const BASE_URL = "http://localhost:8000";
+
       const url = isRegister
-        ? "http://localhost:8000/auth/register"
-        : "http://localhost:8000/auth/login";
+        ? `${BASE_URL}/auth/register`
+        : `${BASE_URL}/auth/login`;
 
       const body = isRegister
         ? {
@@ -63,10 +69,10 @@ function Login({ setIsLoggedIn, setUsername }) {
       if (!isRegister) {
         localStorage.setItem("token", data.access_token);
         // store username
-        localStorage.setItem("username", formData.username);
+        localStorage.setItem("username", data.username || formData.username);
         
         setIsLoggedIn(true);
-        setUsername(formData.username);
+        setUsername(data.username || formData.username);
 
         navigate("/");
       }
@@ -78,13 +84,22 @@ function Login({ setIsLoggedIn, setUsername }) {
 
     } 
     catch (err) {
-      setError(err.message);
+      setError(err.message || "Network error");
+    }
+    finally {
+      setLoading(false);
     }
   };
 
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#fffbf5]">
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -30 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="min-h-screen flex items-center justify-center bg-white"
+    >
 
       <div className="w-full bg-white rounded-lg shadow sm:max-w-md">
 
@@ -95,7 +110,11 @@ function Login({ setIsLoggedIn, setUsername }) {
           </h2>
 
           {error && (
-            <p className="text-red-500 text-sm">{error}</p>
+            <p className={`text-sm ${
+              error.includes("successful") ? "text-green-600" : "text-red-500"
+            }`}>
+              {error}
+            </p>
           )}
 
           <form
@@ -173,9 +192,14 @@ function Login({ setIsLoggedIn, setUsername }) {
 
             <button
               type="submit"
+              disabled={loading}
               className="w-full bg-[#358F80] text-white py-2 hover:bg-[#248277] rounded-full"
             >
-              {isRegister ? "Register" : "Login"}
+              {loading
+                ? "Please wait..."
+                : isRegister
+                ? "Register"
+                : "Login"}
             </button>
 
           </form>
@@ -202,7 +226,7 @@ function Login({ setIsLoggedIn, setUsername }) {
 
       </div>
 
-    </div>
+    </motion.div>
   );
 }
 
