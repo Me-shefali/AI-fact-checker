@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-function URLInputComponent({ onResult }) {
+function URLInputComponent({ onResult, setIsLoading }) {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -33,6 +33,8 @@ function URLInputComponent({ onResult }) {
       return;
     }
 
+    setIsLoading(true);
+    onResult(null);
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
@@ -61,12 +63,14 @@ function URLInputComponent({ onResult }) {
 
       const data = await response.json();
       onResult(data);
-    } 
+    }
+
     catch (err) {
       setError("Failed to verify URL. Please try again.");
       console.error("Error:", err);
     }
 
+    setIsLoading(false);
     setLoading(false);
   };
 
@@ -76,6 +80,7 @@ function URLInputComponent({ onResult }) {
         type="url"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
+        disabled={loading}
         placeholder="Enter URL (e.g., https://example.com)..."
         className="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
       />

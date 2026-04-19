@@ -1,19 +1,29 @@
 import { useState } from "react";
 
-function TextInputComponent({ onResult }) {
+function TextInputComponent({ onResult, setIsLoading }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleVerify = async () => {
+    setError("");
+
+    if (!text.trim()) {
+      setError("Please enter some text to verify");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setError("Please login to verify content");
+      return;
+    }
+
+    setIsLoading(true);
+    onResult(null);  //removes previous results
     setLoading(true);
 
     try {
-      const token = localStorage.getItem("token");
-       if (!token) {
-        console.error("No auth token found. Is the user logged in?");
-        setLoading(false);
-        return;
-      }
       const response = await fetch("http://localhost:8000/api/verify", {
         method: "POST",
         headers: {
@@ -22,19 +32,24 @@ function TextInputComponent({ onResult }) {
         },
         body: JSON.stringify({ text })
       });
-         if (!response.ok) {
+
+      if (!response.ok) {
         const err = await response.json();
         console.error("API error:", err.detail);
+        setError(err.detail || "Verification failed");
         setLoading(false);
         return;
       }
+
       const data = await response.json();
       onResult(data);
 
     } catch (error) {
+      setError("Network error. Please try again.");
       console.error("Error:", error);
     }
 
+    setIsLoading(false);
     setLoading(false);
   };
 
@@ -46,6 +61,9 @@ function TextInputComponent({ onResult }) {
         placeholder="Paste text to fact-check..."
         className="w-full h-32 p-3 border border-grey-300 rounded"
       ></textarea>
+
+      {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+      
       <button 
         onClick={handleVerify}
         disabled={loading}

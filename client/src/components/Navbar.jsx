@@ -9,10 +9,10 @@ function Navbar({ isLoggedIn, setIsLoggedIn }) {
   return (
     <>
       <nav 
-        className="sticky top-4 z-50 mx-6
+        className="sticky top-0 z-50 mx-6
           backdrop-blur-lg bg-white/70
           shadow-lg
-          px-8 py-3
+          px-8 py-3 mb-6
           flex justify-between items-center
           rounded-2xl
           border border-white/40"
