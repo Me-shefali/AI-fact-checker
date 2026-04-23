@@ -43,7 +43,7 @@ function Home({ isLoggedIn, username }) {
             {!activeInput &&
               (isLoggedIn
                 ? `Hey, ${username}! What's on your mind?`
-                : "Fact Check")}
+                : "Let's, Fact Check!")}
           </motion.h2>
         </AnimatePresence>
       </div>
