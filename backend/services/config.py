@@ -90,9 +90,9 @@ TRUSTED_DOMAINS = [
 # ── DOMAIN EXPERTISE ─────────────────────────────────────
 DOMAIN_EXPERTISE_BONUS = {
     "health": ["who.int", "cdc.gov", "mohfw.gov.in", "icmr.gov.in"],
-    "science": ["nature.com", "science.org", "isro.gov.in", "csir.res.in"],
+    "science": ["nature.com", "science.org", "isro.gov.in", "csir.res.in", "nasa.gov"],
     "finance": ["imf.org", "worldbank.org", "rbi.org.in", "finmin.nic.in"],
-    "technology": ["openai.com", "nist.gov", "cert-in.org.in", "meity.gov.in"],
+    "technology": ["openai.com", "nist.gov", "cert-in.org.in", "meity.gov.in", "drdo.gov.in"],
 }
 
 CULTURAL_PATTERNS = {
