@@ -1,8 +1,21 @@
 from typing import List, Dict
 from ddgs import DDGS
+from newspaper import Article
 
 from services.config import *
 from utils.util import *
+
+# ── SCRAPE HELPER ───────────────────────────────────────
+def scrape_full_text(url: str) -> str:
+    """Scrapes full text from a URL using newspaper3k."""
+    try:
+        article = Article(url)
+        article.download()
+        article.parse()
+        return article.text
+    except Exception as e:
+        print(f"[SCRAPE] Failed to scrape {url}: {str(e)[:50]}")
+        return ""
 
 # ── BUILD TRUSTED SEARCH FILTER ─────────────────────────
 def build_trusted_filter():
@@ -12,45 +25,22 @@ def build_trusted_filter():
 def search_evidence(queries: List[str], max_results: int = 5) -> List[Dict]:
     results = []
     seen_urls = set()
-    trusted_filter = build_trusted_filter()
-    trusted_budget = max(1, int(len(queries) * TRUSTED_RESULTS_RATIO))
-
-    print(f"[SEARCH] Starting with {len(queries)} queries, trusted_budget={trusted_budget}")
-
+    
+    # 1. Broad Search (Always run first to get diverse sources)
+    print(f"[SEARCH] Running broad search for {len(queries)} queries...")
     with DDGS() as ddgs:
-        # 🔥 1. PRIORITIZE TRUSTED SEARCH
-        for q_idx, q in enumerate(queries[:trusted_budget]):
-            trusted_query = f"{q} {trusted_filter}"
-            print(f"[SEARCH] Trusted query {q_idx}: {q[:60]}...")
+        for q_idx, q in enumerate(queries):
+            print(f"[SEARCH] Query {q_idx}: {q[:60]}...")
             try:
-                for r in ddgs.text(trusted_query, max_results=MAX_SEARCH_RESULTS):
-                    url = r.get("href", "")
-                    if not url or url in seen_urls:
-                        continue
-
-                    seen_urls.add(url)
-                    results.append({
-                        "title": r.get("title", ""),
-                        "text": " ".join(filter(None, [
-                            r.get("snippet", ""),
-                            r.get("title", "")
-                        ])),
-                        "url": url,
-                        "domain": extract_domain(url)
-                    })
-                print(f"[SEARCH] Trusted query {q_idx}: got {len([r for r in results if r['url']])} unique results")
-            except Exception as e:
-                print(f"[SEARCH] Trusted query {q_idx} failed: {str(e)[:100]}")
-                continue
-
-        # 🔥 2. NORMAL SEARCH (fallback)
-        for q_idx, q in enumerate(queries[trusted_budget:], start=trusted_budget):
-            print(f"[SEARCH] Normal query {q_idx}: {q[:60]}...")
-            try:
+                # Run broad search
                 for r in ddgs.text(q, max_results=MAX_SEARCH_RESULTS):
                     url = r.get("href", "")
                     if not url or url in seen_urls:
                         continue
+                    
+                    # Filter out obvious non-news/boilerplate URLs
+                    if any(x in url.lower() for x in ["facebook.com", "twitter.com", "instagram.com", "youtube.com/watch?v="]):
+                        continue
 
                     seen_urls.add(url)
                     results.append({
@@ -62,10 +52,50 @@ def search_evidence(queries: List[str], max_results: int = 5) -> List[Dict]:
                         "url": url,
                         "domain": extract_domain(url)
                     })
-                print(f"[SEARCH] Normal query {q_idx}: got {len([r for r in results if r['url']])} total unique results")
             except Exception as e:
-                print(f"[SEARCH] Normal query {q_idx} failed: {str(e)[:100]}")
+                print(f"[SEARCH] Query {q_idx} failed: {str(e)[:100]}")
                 continue
+
+    # 2. Targeted Search for Trusted Sources (Boosting)
+    # We already have results, but we might want to ensure we didn't miss trusted ones
+    trusted_filter = build_trusted_filter()
+    print(f"[SEARCH] Running targeted trusted search...")
+    try:
+        with DDGS() as ddgs:
+            # Just run the most important query with trusted filter
+            for r in ddgs.text(f"{queries[0]} {trusted_filter}", max_results=3):
+                url = r.get("href", "")
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                results.append({
+                    "title": r.get("title", ""),
+                    "text": r.get("snippet", ""),
+                    "url": url,
+                    "domain": extract_domain(url)
+                })
+    except:
+        pass
+
+    # 🚀 ENHANCEMENT: Scrape top 3 results for richer context (increased from 2)
+    # We sort by snippet relevance briefly to pick which to scrape
+    temp_scored = []
+    for r in results:
+        # Simple word match for priority scraping
+        score = sum(1 for word in queries[0].lower().split() if word in r["text"].lower())
+        temp_scored.append((score, r))
+    
+    temp_scored.sort(key=lambda x: x[0], reverse=True)
+    results_to_scrape = [x[1] for x in temp_scored[:3]]
+
+    print(f"[SEARCH] Scraping top {len(results_to_scrape)} results for deeper context...")
+    for r in results_to_scrape:
+        full_text = scrape_full_text(r["url"])
+        if full_text and len(full_text) > 200:
+            # Clean boilerplate from full text
+            full_text = re.sub(r"Add .* as your preferred source.*", "", full_text, flags=re.IGNORECASE)
+            full_text = re.sub(r"Click here to .*|Read more.*", "", full_text, flags=re.IGNORECASE)
+            r["text"] = full_text[:3500] 
 
     final_count = len(results)
     print(f"[SEARCH] FINAL: {final_count} results before truncation to {max_results}")
@@ -81,7 +111,12 @@ def score_evidence(claim: str, evidence_list: List[Dict]) -> List[Dict]:
         text = e.get("text", "").strip()
         url = e.get("url", "")
 
-        if not text or len(text) < 20:
+        # 🔥 FILTER BOILERPLATE
+        if "as your preferred source" in text.lower() or "subscribe to" in text.lower():
+            print(f"[SCORE] Item {idx}: SKIPPED - boilerplate detected")
+            continue
+
+        if not text or len(text) < 50: # Increased min length for better quality
             print(f"[SCORE] Item {idx}: SKIPPED - text too short ({len(text)} chars)")
             continue
 
@@ -96,20 +131,27 @@ def score_evidence(claim: str, evidence_list: List[Dict]) -> List[Dict]:
         domain = e.get("domain") or extract_domain(url)
         credibility = calculate_source_credibility(domain, text)
 
+        # Domain matching - if claim mentions the domain/agency, boost credibility
+        if any(term in claim.lower() for term in domain.split('.')):
+            credibility = min(credibility + 0.15, 0.98)
+            print(f"[SCORE] Item {idx}: Topic-relevant domain boost applied")
+
         trusted = (
             domain in TRUSTED_DOMAINS or
             domain.endswith(".gov") or
             domain.endswith(".int") or
-            domain.endswith(".edu")
+            domain.endswith(".edu") or
+            domain.endswith(".gov.in")
         )
 
         reliability_bonus = 0.0
         if trusted:
-            reliability_bonus = 0.08
-            credibility = min(credibility + 0.05, 0.98)
+            reliability_bonus = 0.12 # Increased bonus
+            credibility = min(credibility + 0.1, 0.98)
 
         direction = assess_support_direction(claim, text)
 
+        # Adjusted scoring weights for better accuracy
         final_score = min(
             WEIGHT_SIMILARITY * similarity +
             WEIGHT_CREDIBILITY * credibility +

@@ -105,39 +105,43 @@ def extract_domain(url: str) -> str:
 
 # ── SIMILARITY ──────────────────────────────────────────
 def calculate_claim_similarity(claim1: str, claim2: str) -> float:
+    # 1. Keyword Overlap (Jaccard)
     set1 = set(extract_key_terms(claim1))
     set2 = set(extract_key_terms(claim2))
 
     if not set1 or not set2:
         return 0.0
 
-    # Jaccard similarity on key terms
     jaccard = len(set1 & set2) / len(set1 | set2) if len(set1 | set2) > 0 else 0
 
-    # Phrase match bonus - check if claim appears in text or vice versa
-    phrase_bonus = 0.1 if (
-        claim1[:80].lower() in claim2.lower() or 
-        claim2[:80].lower() in claim1.lower() or
-        claim1.lower() in claim2.lower() or
-        claim2.lower() in claim1.lower()
-    ) else 0
+    # 2. Fuzzy Phrase Matching
+    # Check for significant overlapping sequences
+    c1_low = claim1.lower()
+    c2_low = claim2.lower()
+    
+    # Split into smaller chunks to find matches
+    chunks = [c1_low[i:i+30] for i in range(0, min(len(c1_low), 150), 20)]
+    chunk_matches = sum(1 for chunk in chunks if len(chunk) > 10 and chunk in c2_low)
+    phrase_match_score = min(chunk_matches / max(len(chunks), 1), 0.25)
 
-    # Key term presence - bonus if ANY of the important terms appear in the text
-    important_terms = set1  # terms from the claim
-    term_presence = len(important_terms & set2) / len(important_terms) if important_terms else 0
-    term_presence_bonus = min(term_presence * 0.15, 0.15)  # up to 15% bonus
+    # 3. Direct Key Entity Check
+    entities1 = set(re.findall(r"\b[A-Z][a-z]+\b", claim1))
+    entities2 = set(re.findall(r"\b[A-Z][a-z]+\b", claim2))
+    entity_overlap = len(entities1 & entities2) / len(entities1) if entities1 else 0
+    entity_bonus = min(entity_overlap * 0.2, 0.2)
 
-    # Number matching bonus
+    # 4. Number matching bonus
     nums1 = set(re.findall(r"\d+", claim1))
     nums2 = set(re.findall(r"\d+", claim2))
-    number_bonus = 0.1 if nums1 & nums2 else 0
+    number_match = len(nums1 & nums2) / len(nums1) if nums1 else 0
+    number_bonus = min(number_match * 0.15, 0.15)
 
-    # Calculate final similarity as weighted combination
+    # Calculate final similarity
     final_similarity = (
         jaccard * 0.4 +           # 40% weight on exact term overlap
-        phrase_bonus +             # 10% if phrase appears
-        term_presence_bonus +      # up to 15% if key terms present
-        number_bonus               # 10% if numbers match
+        phrase_match_score +       # up to 25% for partial phrase matches
+        entity_bonus +             # up to 20% if key entities match
+        number_bonus               # up to 15% if numbers match
     )
 
     return min(final_similarity, 1.0)
@@ -181,112 +185,96 @@ CONTRADICTORY_MARKERS = [
 ]
 
 
-def detect_negation(text: str) -> bool:
-    """Detect if a claim contains negation (not, no, never, etc.)"""
+def detect_negation_count(text: str) -> int:
+    """Detect number of negation markers in a text to handle double negations."""
     negation_patterns = [
         r'\bnot\b', r'\bno\b', r'\bnever\b', r'\bneither\b',
         r'\bno.*?able\b', r'\bcan\'?t\b', r'\bwouldn\'?t\b',
         r'\bdon\'?t\b', r'\bdoesn\'?t\b', r'\bdidn\'?t\b',
-        r'\bisn\'?t\b', r'\baren\'?t\b', r'\bwasn\'?t\b', r'\bweren\'?t\b'
+        r'\bisn\'?t\b', r'\baren\'?t\b', r'\bwasn\'?t\b', r'\bweren\'?t\b',
+        r'\bfalse\b', r'\buntrue\b', r'\bincorrect\b', r'\bdeny\b', r'\bdenies\b'
     ]
     text_lower = text.lower()
+    count = 0
     for pattern in negation_patterns:
-        if re.search(pattern, text_lower):
-            return True
-    return False
+        count += len(re.findall(pattern, text_lower))
+    return count
 
 
-def remove_negation(text: str) -> str:
-    """Remove negation from a claim for NLI comparison"""
+def remove_negations(text: str) -> str:
+    """Carefully remove negation markers for NLI comparison."""
     negation_removals = [
         (r'\bis\s+not\b', 'is'),
         (r'\bare\s+not\b', 'are'),
         (r'\bwas\s+not\b', 'was'),
         (r'\bwere\s+not\b', 'were'),
-        (r'\bnot\s+', ''),
-        (r'\bno\s+', ''),
-        (r'\bn\'?t\b', ''),
+        (r'\bnot\b', ''),
+        (r'\bno\b', ''),
+        (r'\bn\'t\b', ''),
+        (r'\bfalse\b', ''),
+        (r'\buntrue\b', ''),
     ]
     result = text
     for pattern, replacement in negation_removals:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-    return result.strip()
+    
+    # Clean up double spaces
+    result = re.sub(r'\s+', ' ', result).strip()
+    return result
 
 
 def assess_support_direction(claim: str, text: str) -> Dict[str, Any]:
     try:
-        # 🔴 Check if claim contains negation
-        has_negation = detect_negation(claim)
-        claim_for_nli = remove_negation(claim) if has_negation else claim
+        # 🔴 Handle complex negations
+        claim_neg_count = detect_negation_count(claim)
+        text_neg_count = detect_negation_count(text)
+        
+        # We compare non-negated versions for NLI base similarity
+        clean_claim = remove_negations(claim)
+        clean_text = remove_negations(text)
 
-        print(f"[NLI] Claim: {claim}")
-        print(f"[NLI] Has negation: {has_negation}")
-        if has_negation:
-            print(f"[NLI] Non-negated version: {claim_for_nli}")
+        print(f"[NLI] Original Claim: {claim} (Negs: {claim_neg_count})")
+        print(f"[NLI] Original Text: {text[:100]}... (Negs: {text_neg_count})")
 
-        # Use NLI model on the non-negated claim
-        scores = nli_model.predict([(claim_for_nli, text)])[0]  # [contradiction, entailment, neutral]
+        # Use NLI model
+        scores = nli_model.predict([(claim, text)])[0]  # [contradiction, entailment, neutral]
         contradiction_score = scores[0]
         entailment_score = scores[1]
         neutral_score = scores[2]
 
-        print(f"[NLI] Scores - Entailment: {entailment_score:.3f}, Contradiction: {contradiction_score:.3f}, Neutral: {neutral_score:.3f}")
+        print(f"[NLI] Raw Scores - Entailment: {entailment_score:.3f}, Contradiction: {contradiction_score:.3f}")
 
-        # Determine direction based on highest score
-        if entailment_score > contradiction_score and entailment_score > neutral_score:
+        # Determine raw direction
+        if entailment_score > contradiction_score and entailment_score > 0.3:
             direction = "support"
-            confidence_delta = float(entailment_score) * 0.1
-        elif contradiction_score > entailment_score and contradiction_score > neutral_score:
+            confidence_delta = float(entailment_score) * 0.12
+        elif contradiction_score > entailment_score and contradiction_score > 0.3:
             direction = "contradict"
-            confidence_delta = float(contradiction_score) * 0.1
+            confidence_delta = float(contradiction_score) * 0.12
         else:
-            direction = "neutral"
-            confidence_delta = 0.0
+            # If model is uncertain, try the "clean" versions
+            clean_scores = nli_model.predict([(clean_claim, clean_text)])[0]
+            if clean_scores[1] > clean_scores[0] and clean_scores[1] > 0.4:
+                # They are about the same topic, so use negation parity to decide
+                parity = (claim_neg_count % 2) == (text_neg_count % 2)
+                direction = "support" if parity else "contradict"
+                confidence_delta = float(clean_scores[1]) * 0.08
+                print(f"[NLI] Parity check used: direction={direction}")
+            else:
+                direction = "neutral"
+                confidence_delta = 0.0
 
-        print(f"[NLI] Initial direction (before negation flip): {direction}")
-
-        # 🔴 FLIP DIRECTION IF ORIGINAL CLAIM WAS NEGATED
-        if has_negation:
-            if direction == "support":
-                direction = "contradict"
-                confidence_delta = float(entailment_score) * 0.1
-                print(f"[NLI] Negation flip: support → contradict")
-            elif direction == "contradict":
-                direction = "support"
-                confidence_delta = float(contradiction_score) * 0.1
-                print(f"[NLI] Negation flip: contradict → support")
-
-        print(f"[NLI] Final direction (after negation flip): {direction}")
+        print(f"[NLI] Final direction: {direction}")
 
         support_count = float(entailment_score)
         contradict_count = float(contradiction_score)
 
     except Exception as e:
-        print(f"[NLI] Error in NLI prediction: {str(e)[:100]}")
-        # Fallback to keyword-based with negation handling
-        has_negation = detect_negation(claim)
-        lower_text = text.lower()
-        support_count = sum(1 for marker in SUPPORTIVE_MARKERS if marker in lower_text)
-        contradict_count = sum(1 for marker in CONTRADICTORY_MARKERS if marker in lower_text)
-
-        if support_count and contradict_count:
-            direction = "neutral"
-        elif contradict_count:
-            direction = "contradict"
-        elif support_count:
-            direction = "support"
-        else:
-            direction = "neutral"
-
-        # 🔴 FLIP DIRECTION IF CLAIM HAD NEGATION
-        if has_negation and direction != "neutral":
-            direction = "contradict" if direction == "support" else "support"
-
+        print(f"[NLI] Error: {str(e)}")
+        direction = "neutral"
         confidence_delta = 0.0
-        if direction == "support":
-            confidence_delta = 0.06
-        elif direction == "contradict":
-            confidence_delta = -0.08
+        support_count = 0.5
+        contradict_count = 0.5
 
     return {
         "direction": direction,
