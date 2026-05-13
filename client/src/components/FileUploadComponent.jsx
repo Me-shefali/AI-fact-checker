@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-function FileUploadComponent({ onResult }) {
+function FileUploadComponent({ onResult, setIsLoading }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
